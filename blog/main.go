@@ -16,12 +16,18 @@ func main() {
 	//2. 使用手写框架实现
 	engine := msgo.New()
 	groupUser := engine.Group("user")
-	groupUser.Add("/hello", func(w http.ResponseWriter, r *http.Request) {
+	groupUser.Get("/hi", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s 欢迎来到手写web框架", "wushao")
 	})
+	groupUser.Post("/up", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s 2欢迎来到手写web框架", "wushao")
+	})
 	groupGoods := engine.Group("goods")
-	groupGoods.Add("goodList", func(w http.ResponseWriter, r *http.Request) {
+	groupGoods.Any("goodList", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s 货物清单", "wushao")
+	})
+	groupGoods.Get("goodList2", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s 2货物清单", "wushao")
 	})
 	engine.Run()
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/codevvvv9/msgo"
-	"net/http"
 )
 
 func main() {
@@ -16,18 +15,21 @@ func main() {
 	//2. 使用手写框架实现
 	engine := msgo.New()
 	groupUser := engine.Group("user")
-	groupUser.Get("/hi", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "%s 欢迎来到手写web框架", "wushao")
+	groupUser.Get("/hi", func(ctx *msgo.Context) {
+		fmt.Fprintf(ctx.W, "%s 欢迎来到手写web框架", "wushao")
 	})
-	groupUser.Post("/up", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "%s 2欢迎来到手写web框架", "wushao")
+	groupUser.Post("/up", func(ctx *msgo.Context) {
+		fmt.Fprintf(ctx.W, "%s post 欢迎来到手写web框架", "wushao")
+	})
+	groupUser.Get("/up", func(ctx *msgo.Context) {
+		fmt.Fprintf(ctx.W, "%s get 欢迎来到手写web框架", "wushao")
 	})
 	groupGoods := engine.Group("goods")
-	groupGoods.Any("goodList", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "%s 货物清单", "wushao")
+	groupGoods.Any("goodList", func(ctx *msgo.Context) {
+		fmt.Fprintf(ctx.W, "%s 货物清单", "wushao")
 	})
-	groupGoods.Get("goodList2", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "%s 2货物清单", "wushao")
+	groupGoods.Get("goodList2", func(ctx *msgo.Context) {
+		fmt.Fprintf(ctx.W, "%s 2货物清单", "wushao")
 	})
 	engine.Run()
 }

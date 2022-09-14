@@ -7,12 +7,17 @@ import (
 	"strings"
 )
 
-type HandleFunc func(w http.ResponseWriter, r *http.Request)
+const Any = "ANY"
+
+// HandleFunc 使用上下文结构体改造
+type HandleFunc func(ctx *Context)
 
 // 路由组
 type routerGroup struct {
-	name             string
-	handlerFuncMap   map[string]HandleFunc
+	name string
+	// 同一路径的不同请求方式
+	handlerFuncMap map[string]map[string]HandleFunc
+	//支持不同的请求方式  {"post": ["/hi", "/hello"]}
 	handlerMethodMap map[string][]string
 }
 
@@ -21,17 +26,27 @@ type routerGroup struct {
 //	r.handlerFuncMap[name] = handleFunc
 //}
 
+func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) {
+	_, ok := r.handlerFuncMap[name]
+	if !ok {
+		r.handlerFuncMap[name] = make(map[string]HandleFunc)
+	}
+	_, ok = r.handlerFuncMap[name][method]
+	if ok {
+		panic("有重复路由")
+	}
+	r.handlerFuncMap[name][method] = handleFunc
+	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], name)
+
+}
 func (r *routerGroup) Any(name string, handlerFunc HandleFunc) {
-	r.handlerFuncMap[name] = handlerFunc
-	r.handlerMethodMap["Any"] = append(r.handlerMethodMap["any"], name)
+	r.handle(name, Any, handlerFunc)
 }
 func (r *routerGroup) Get(name string, handlerFunc HandleFunc) {
-	r.handlerFuncMap[name] = handlerFunc
-	r.handlerMethodMap[http.MethodGet] = append(r.handlerMethodMap[http.MethodGet], name)
+	r.handle(name, http.MethodGet, handlerFunc)
 }
 func (r *routerGroup) Post(name string, handlerFunc HandleFunc) {
-	r.handlerFuncMap[name] = handlerFunc
-	r.handlerMethodMap[http.MethodPost] = append(r.handlerMethodMap[http.MethodPost], name)
+	r.handle(name, http.MethodPost, handlerFunc)
 }
 
 // 3、user /get/list user组下面才是url
@@ -44,7 +59,7 @@ func (r *router) Group(name string) *routerGroup {
 	group := &routerGroup{
 		//handlerFuncMap: map[string]HandleFunc{},
 		// 和上面的写法一个效果
-		handlerFuncMap:   make(map[string]HandleFunc),
+		handlerFuncMap:   make(map[string]map[string]HandleFunc),
 		name:             name,
 		handlerMethodMap: make(map[string][]string),
 	}
@@ -82,27 +97,21 @@ func (e *Engine) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			//http.HandleFunc(requestUrl, methodHandle)
 			// 比较请求url和拼接的url是否相同
 			if request.RequestURI == requestUrl {
-				// 先看看属不属于any类型的
-				routers, ok := group.handlerMethodMap["Any"]
-				if ok {
-					for _, routerName := range routers {
-						// 比较map中存储的切片中的最后一级url和name
-						if routerName == name {
-							methodHandle(writer, request)
-							return
-						}
-					}
+				//构造上下文
+				ctx := &Context{
+					W: writer,
+					R: request,
 				}
-				// any中不ok 就去methodMap中遍历
-				routers, ok = group.handlerMethodMap[method]
+				// 先看看属不属于any类型的
+				handle, ok := methodHandle[Any]
 				if ok {
-					for _, routerName := range routers {
-						// 比较map中存储的切片中的最后一级url和name
-						if routerName == name {
-							methodHandle(writer, request)
-							return
-						}
-					}
+					handle(ctx)
+					return
+				}
+				handle, ok = methodHandle[method]
+				if ok {
+					handle(ctx)
+					return
 				}
 				// 具体method中不ok 就报错了
 				writer.WriteHeader(http.StatusMethodNotAllowed)

@@ -12,13 +12,15 @@ const Any = "ANY"
 // HandleFunc 使用上下文结构体改造
 type HandleFunc func(ctx *Context)
 
-// 路由组
+// 路由组 一定要注意初始化
 type routerGroup struct {
 	name string
 	// 同一路径的不同请求方式
 	handlerFuncMap map[string]map[string]HandleFunc
 	//支持不同的请求方式  {"post": ["/hi", "/hello"]}
 	handlerMethodMap map[string][]string
+	// 前缀树
+	treeNode *treeNode
 }
 
 // 其实已经用不到这个方法了
@@ -27,6 +29,11 @@ type routerGroup struct {
 //}
 
 func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) {
+	//兼容路径名没有 / 的情况
+	nameHasPrefix := strings.HasPrefix(name, "/")
+	if !nameHasPrefix {
+		name = "/" + name
+	}
 	_, ok := r.handlerFuncMap[name]
 	if !ok {
 		r.handlerFuncMap[name] = make(map[string]HandleFunc)
@@ -38,6 +45,7 @@ func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) 
 	r.handlerFuncMap[name][method] = handleFunc
 	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], name)
 
+	r.treeNode.Put(name)
 }
 func (r *routerGroup) Any(name string, handlerFunc HandleFunc) {
 	r.handle(name, Any, handlerFunc)
@@ -47,6 +55,21 @@ func (r *routerGroup) Get(name string, handlerFunc HandleFunc) {
 }
 func (r *routerGroup) Post(name string, handlerFunc HandleFunc) {
 	r.handle(name, http.MethodPost, handlerFunc)
+}
+func (r *routerGroup) Put(name string, handlerFunc HandleFunc) {
+	r.handle(name, http.MethodPut, handlerFunc)
+}
+func (r *routerGroup) Delete(name string, handlerFunc HandleFunc) {
+	r.handle(name, http.MethodDelete, handlerFunc)
+}
+func (r *routerGroup) Patch(name string, handlerFunc HandleFunc) {
+	r.handle(name, http.MethodPatch, handlerFunc)
+}
+func (r *routerGroup) Options(name string, handlerFunc HandleFunc) {
+	r.handle(name, http.MethodOptions, handlerFunc)
+}
+func (r *routerGroup) Head(name string, handlerFunc HandleFunc) {
+	r.handle(name, http.MethodHead, handlerFunc)
 }
 
 // 3、user /get/list user组下面才是url
@@ -62,6 +85,12 @@ func (r *router) Group(name string) *routerGroup {
 		handlerFuncMap:   make(map[string]map[string]HandleFunc),
 		name:             name,
 		handlerMethodMap: make(map[string][]string),
+		treeNode: &treeNode{
+			name:       "/",
+			children:   make([]*treeNode, 0),
+			routerName: "",
+			isEnd:      false,
+		},
 	}
 
 	r.routerGroups = append(r.routerGroups, group)
@@ -78,56 +107,36 @@ func (e *Engine) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	groups := e.router.routerGroups
 	// 根据url进行匹配
 	for _, group := range groups {
-		for name, methodHandle := range group.handlerFuncMap {
-			groupNameHasSlash := strings.HasPrefix(group.name, "/")
-			routerKeyHasSlash := strings.HasPrefix(name, "/")
-			var groupName string
-			var requestUrl string
-			if groupNameHasSlash {
-				groupName = group.name
-			} else {
-				groupName = "/" + group.name
+		routerName := SubStringLast(request.RequestURI, "/"+group.name)
+		// routerName 类似于 get/1
+		node := group.treeNode.Get(routerName)
+		if node != nil && node.isEnd {
+			//路由匹配上了
+			ctx := &Context{
+				W: writer,
+				R: request,
 			}
-			if routerKeyHasSlash {
-				requestUrl = groupName + name
-			} else {
-				requestUrl = groupName + "/" + name
-			}
-
-			//http.HandleFunc(requestUrl, methodHandle)
-			// 比较请求url和拼接的url是否相同
-			if request.RequestURI == requestUrl {
-				//构造上下文
-				ctx := &Context{
-					W: writer,
-					R: request,
-				}
-				// 先看看属不属于any类型的
-				handle, ok := methodHandle[Any]
-				if ok {
-					handle(ctx)
-					return
-				}
-				handle, ok = methodHandle[method]
-				if ok {
-					handle(ctx)
-					return
-				}
-				// 具体method中不ok 就报错了
-				writer.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(writer, "%s %s not allowed \n", request.RequestURI, method)
+			// 先查看ANY类型
+			handle, ok := group.handlerFuncMap[node.routerName][Any]
+			if ok {
+				handle(ctx)
 				return
 			}
-
+			// 再查看具体方法
+			handle, ok = group.handlerFuncMap[node.routerName][method]
+			if ok {
+				handle(ctx)
+				return
+			}
+			// 具体method中不ok 就报错了
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(writer, "%s %s not allowed \n", request.RequestURI, method)
+			return
 		}
-
 	}
 	// url不匹配
 	writer.WriteHeader(http.StatusNotFound)
 	fmt.Fprintf(writer, "%s %s not found \n", request.RequestURI, method)
-	return
-	//TODO implement me
-	panic("implement me")
 }
 
 func New() *Engine {
@@ -137,28 +146,6 @@ func New() *Engine {
 }
 
 func (e *Engine) Run() {
-	//for _, group := range e.routerGroups {
-	//	for key, value := range group.handlerFuncMap {
-	//		groupNameHasSlash := strings.HasPrefix(group.name, "/")
-	//		routerKeyHasSlash := strings.HasPrefix(key, "/")
-	//		var groupName string
-	//		var handleFuncName string
-	//		if groupNameHasSlash {
-	//			groupName = group.name
-	//		} else {
-	//			groupName = "/" + group.name
-	//		}
-	//		if routerKeyHasSlash {
-	//			handleFuncName = groupName + key
-	//		} else {
-	//			handleFuncName = groupName + "/" + key
-	//		}
-	//
-	//		http.HandleFunc(handleFuncName, value)
-	//	}
-	//
-	//}
-
 	// 3、支持不同的方法，全拦截
 	http.Handle("/", e)
 	err := http.ListenAndServe(":8111", nil)

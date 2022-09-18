@@ -5,6 +5,14 @@ import (
 	"github.com/codevvvv9/msgo"
 )
 
+func Log(next msgo.HandleFunc) msgo.HandleFunc {
+	return func(ctx *msgo.Context) {
+		fmt.Println("打印请求参数")
+		next(ctx)
+		fmt.Println("返回执行时间")
+	}
+}
+
 func main() {
 	//1. 使用远程实现web接口
 	//http.HandleFunc("/hello", func(writer http.ResponseWriter, request *http.Request) {
@@ -27,7 +35,7 @@ func main() {
 	})
 	groupUser.Post("/up", func(ctx *msgo.Context) {
 		fmt.Fprintf(ctx.W, "%s post 欢迎来到手写web框架", "wushao")
-	})
+	}, Log, Log2)
 	groupUser.Put("/up", func(ctx *msgo.Context) {
 		fmt.Println("我是next")
 		fmt.Fprintf(ctx.W, "%s get 欢迎来到手写web框架", "wushao")

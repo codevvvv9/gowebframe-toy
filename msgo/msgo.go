@@ -20,12 +20,12 @@ type routerGroup struct {
 	name string
 	// 同一路径的不同请求方式
 	handlerFuncMap map[string]map[string]HandleFunc
+	// 路由级别中间件
+	middlewaresFuncMap map[string]map[string][]MiddlewareFunc
 	//支持不同的请求方式  {"post": ["/hi", "/hello"]}
 	handlerMethodMap map[string][]string
 	// 前缀树
 	treeNode *treeNode
-	// 组级别中间件map
-	middlewareMap map[string]map[string][]MiddlewareFunc
 	// 组级别的多个中间件函数
 	middlewares []MiddlewareFunc
 }
@@ -35,17 +35,27 @@ func (r *routerGroup) Use(middlewareFunc ...MiddlewareFunc) {
 	r.middlewares = append(r.middlewares, middlewareFunc...)
 }
 
-func (r *routerGroup) methodHandle(method string, handleMap map[string]HandleFunc, ctx *Context) {
+func (r *routerGroup) methodHandle(name string, method string, handleMap map[string]HandleFunc, ctx *Context) {
 	h := handleMap[method]
+	// 路由组 通用中间件
 	middlewares := r.middlewares
 	if middlewares != nil {
 		for _, middleware := range middlewares {
 			h = middleware(h)
 		}
 	}
+
+	// 路由组 单url中间件
+	middlewareFuncs := r.middlewaresFuncMap[name][method]
+	if middlewareFuncs != nil {
+		for _, middlewareFunc := range middlewareFuncs {
+			h = middlewareFunc(h)
+		}
+	}
+
 	h(ctx)
 }
-func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) {
+func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
 	//兼容路径名没有 / 的情况
 	nameHasPrefix := strings.HasPrefix(name, "/")
 	if !nameHasPrefix {
@@ -54,39 +64,40 @@ func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) 
 	_, ok := r.handlerFuncMap[name]
 	if !ok {
 		r.handlerFuncMap[name] = make(map[string]HandleFunc)
+		r.middlewaresFuncMap[name] = make(map[string][]MiddlewareFunc)
 	}
 	_, ok = r.handlerFuncMap[name][method]
 	if ok {
 		panic("有重复路由")
 	}
 	r.handlerFuncMap[name][method] = handleFunc
+	r.middlewaresFuncMap[name][method] = append(r.middlewaresFuncMap[name][method], middlewareFunc...)
 	r.handlerMethodMap[method] = append(r.handlerMethodMap[method], name)
-
 	r.treeNode.Put(name)
 }
-func (r *routerGroup) Any(name string, handlerFunc HandleFunc) {
-	r.handle(name, Any, handlerFunc)
+func (r *routerGroup) Any(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, Any, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Get(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodGet, handlerFunc)
+func (r *routerGroup) Get(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodGet, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Post(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodPost, handlerFunc)
+func (r *routerGroup) Post(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodPost, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Put(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodPut, handlerFunc)
+func (r *routerGroup) Put(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodPut, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Delete(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodDelete, handlerFunc)
+func (r *routerGroup) Delete(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodDelete, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Patch(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodPatch, handlerFunc)
+func (r *routerGroup) Patch(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodPatch, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Options(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodOptions, handlerFunc)
+func (r *routerGroup) Options(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodOptions, handlerFunc, middlewareFunc...)
 }
-func (r *routerGroup) Head(name string, handlerFunc HandleFunc) {
-	r.handle(name, http.MethodHead, handlerFunc)
+func (r *routerGroup) Head(name string, handlerFunc HandleFunc, middlewareFunc ...MiddlewareFunc) {
+	r.handle(name, http.MethodHead, handlerFunc, middlewareFunc...)
 }
 
 // 3、user /get/list user组下面才是url
@@ -108,6 +119,7 @@ func (r *router) Group(name string) *routerGroup {
 			routerName: "",
 			isEnd:      false,
 		},
+		middlewaresFuncMap: make(map[string]map[string][]MiddlewareFunc),
 	}
 
 	r.routerGroups = append(r.routerGroups, group)
@@ -158,14 +170,14 @@ func (e *Engine) requestHTTP(writer http.ResponseWriter, request *http.Request) 
 			_, ok := group.handlerFuncMap[node.routerName][Any]
 			if ok {
 				//handle(ctx)
-				group.methodHandle(Any, group.handlerFuncMap[node.routerName], ctx)
+				group.methodHandle(node.routerName, Any, group.handlerFuncMap[node.routerName], ctx)
 				return
 			}
 			// 再查看具体方法
 			_, ok = group.handlerFuncMap[node.routerName][method]
 			if ok {
 				//handle(ctx)
-				group.methodHandle(method, group.handlerFuncMap[node.routerName], ctx)
+				group.methodHandle(node.routerName, method, group.handlerFuncMap[node.routerName], ctx)
 				return
 			}
 			// 具体method中不ok 就报错了

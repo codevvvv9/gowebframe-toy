@@ -12,6 +12,9 @@ const Any = "ANY"
 // HandleFunc 使用上下文结构体改造
 type HandleFunc func(ctx *Context)
 
+// MiddlewareFunc 中间件函数： 接受一个函数，处理完再把这个函数返回
+type MiddlewareFunc func(handlerFunc HandleFunc) HandleFunc
+
 // 路由组 一定要注意初始化
 type routerGroup struct {
 	name string
@@ -21,13 +24,27 @@ type routerGroup struct {
 	handlerMethodMap map[string][]string
 	// 前缀树
 	treeNode *treeNode
+	// 组级别中间件map
+	middlewareMap map[string]map[string][]MiddlewareFunc
+	// 组级别的多个中间件函数
+	middlewares []MiddlewareFunc
 }
 
-// 其实已经用不到这个方法了
-//func (r *routerGroup) Add(name string, handleFunc HandleFunc) {
-//	r.handlerFuncMap[name] = handleFunc
-//}
+// Use 触发中间件函数
+func (r *routerGroup) Use(middlewareFunc ...MiddlewareFunc) {
+	r.middlewares = append(r.middlewares, middlewareFunc...)
+}
 
+func (r *routerGroup) methodHandle(method string, handleMap map[string]HandleFunc, ctx *Context) {
+	h := handleMap[method]
+	middlewares := r.middlewares
+	if middlewares != nil {
+		for _, middleware := range middlewares {
+			h = middleware(h)
+		}
+	}
+	h(ctx)
+}
 func (r *routerGroup) handle(name string, method string, handleFunc HandleFunc) {
 	//兼容路径名没有 / 的情况
 	nameHasPrefix := strings.HasPrefix(name, "/")
@@ -102,41 +119,7 @@ type Engine struct {
 }
 
 func (e *Engine) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	// 先拿到请求的方法类型 GET POST啥的
-	method := request.Method
-	groups := e.router.routerGroups
-	// 根据url进行匹配
-	for _, group := range groups {
-		routerName := SubStringLast(request.RequestURI, "/"+group.name)
-		// routerName 类似于 get/1
-		node := group.treeNode.Get(routerName)
-		if node != nil && node.isEnd {
-			//路由匹配上了
-			ctx := &Context{
-				W: writer,
-				R: request,
-			}
-			// 先查看ANY类型
-			handle, ok := group.handlerFuncMap[node.routerName][Any]
-			if ok {
-				handle(ctx)
-				return
-			}
-			// 再查看具体方法
-			handle, ok = group.handlerFuncMap[node.routerName][method]
-			if ok {
-				handle(ctx)
-				return
-			}
-			// 具体method中不ok 就报错了
-			writer.WriteHeader(http.StatusMethodNotAllowed)
-			fmt.Fprintf(writer, "%s %s not allowed \n", request.RequestURI, method)
-			return
-		}
-	}
-	// url不匹配
-	writer.WriteHeader(http.StatusNotFound)
-	fmt.Fprintf(writer, "%s %s not found \n", request.RequestURI, method)
+	e.requestHTTP(writer, request)
 }
 
 func New() *Engine {
@@ -153,4 +136,45 @@ func (e *Engine) Run() {
 		log.Fatal(err)
 	}
 
+}
+
+// ServerHTTP真正的执行逻辑代码
+func (e *Engine) requestHTTP(writer http.ResponseWriter, request *http.Request) {
+	// 先拿到请求的方法类型 GET POST啥的
+	method := request.Method
+	groups := e.router.routerGroups
+	// 根据url进行匹配
+	for _, group := range groups {
+		routerName := SubStringLast(request.RequestURI, "/"+group.name)
+		// routerName 类似于 get/1
+		node := group.treeNode.Get(routerName)
+		if node != nil && node.isEnd {
+			//路由匹配上了
+			ctx := &Context{
+				W: writer,
+				R: request,
+			}
+			// 先查看ANY类型
+			_, ok := group.handlerFuncMap[node.routerName][Any]
+			if ok {
+				//handle(ctx)
+				group.methodHandle(Any, group.handlerFuncMap[node.routerName], ctx)
+				return
+			}
+			// 再查看具体方法
+			_, ok = group.handlerFuncMap[node.routerName][method]
+			if ok {
+				//handle(ctx)
+				group.methodHandle(method, group.handlerFuncMap[node.routerName], ctx)
+				return
+			}
+			// 具体method中不ok 就报错了
+			writer.WriteHeader(http.StatusMethodNotAllowed)
+			fmt.Fprintf(writer, "%s %s not allowed \n", request.RequestURI, method)
+			return
+		}
+	}
+	// url不匹配
+	writer.WriteHeader(http.StatusNotFound)
+	fmt.Fprintf(writer, "%s %s not found \n", request.RequestURI, method)
 }
